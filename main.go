@@ -50,6 +50,7 @@ func main() {
 		stateDir    string
 		mode        string
 		statusPort  string
+		verbose     bool
 	)
 
 	flag.StringVar(&authKey, "authkey", "", "Tailscale Auth Key")
@@ -59,6 +60,7 @@ func main() {
 	flag.StringVar(&stateDir, "statedir", "", "State directory (defaults to current working directory)")
 	flag.StringVar(&mode, "mode", "http", "Proxy mode: 'http' or 'socks5'")
 	flag.StringVar(&statusPort, "statusport", "", "Port for status API (disabled if empty)")
+	flag.BoolVar(&verbose, "verbose", false, "Enable verbose logging")
 	flag.Parse()
 
 	fmt.Printf("Arkitekt Sidecar %s\n", version)
@@ -85,8 +87,9 @@ func main() {
 		ControlURL: controlURL,
 		Dir:        stateDir,
 		Logf: func(format string, args ...any) {
-			// Uncomment to see verbose Tailscale logs
-			// fmt.Fprintf(os.Stderr, "[Tailscale] "+format+"\n", args...)
+			if verbose {
+				log.Printf("[Tailscale] "+format, args...)
+			}
 		},
 	}
 	defer s.Close()
