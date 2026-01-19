@@ -9,8 +9,9 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/armon/go-socks5"
 	"tailscale.com/tsnet"
 )
 
@@ -24,20 +25,31 @@ func main() {
 		controlURL  string
 		hostname    string
 		port        string
+		stateDir    string
+		mode        string
 	)
 
 	flag.StringVar(&authKey, "authkey", "", "Tailscale Auth Key")
 	flag.StringVar(&controlURL, "coordserver", "", "Coordination Server URL")
 	flag.StringVar(&hostname, "hostname", "ts-proxy", "Hostname in the Tailnet")
 	flag.StringVar(&port, "port", "8080", "Port to listen on")
+	flag.StringVar(&stateDir, "statedir", "", "State directory (defaults to current working directory)")
+	flag.StringVar(&mode, "mode", "http", "Proxy mode: 'http' or 'socks5'")
 	flag.Parse()
 
 	fmt.Printf("Arkitekt Sidecar %s\n", version)
 
 	// 1. Setup State Directory (prevents re-login on restart)
-	userCacheDir, _ := os.UserCacheDir()
-	stateDir := filepath.Join(userCacheDir, "tsnet-proxy-state")
-	os.MkdirAll(stateDir, 0700)
+	if stateDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			log.Fatalf("!!! Failed to get current working directory: %v", err)
+		}
+		stateDir = cwd
+	}
+	if err := os.MkdirAll(stateDir, 0700); err != nil {
+		log.Fatalf("!!! Failed to create state directory: %v", err)
+	}
 
 	// 2. Configure the embedded Tailscale Node
 	s := &tsnet.Server{
@@ -73,12 +85,35 @@ func main() {
 		Transport: tsTransport,
 	}
 
-	// 4. Start the HTTP Server
+	// 4. Start the Server based on mode
 	addr := fmt.Sprintf("127.0.0.1:%s", port)
-	fmt.Printf(">>> HTTP Proxy listening on %s\n", addr)
-	fmt.Printf(">>> Configure your apps to use HTTP Proxy: %s\n", addr)
-	
-	log.Fatal(http.ListenAndServe(addr, proxy))
+
+	switch mode {
+	case "http":
+		fmt.Printf(">>> HTTP Proxy listening on %s\n", addr)
+		fmt.Printf(">>> Configure your apps to use HTTP Proxy: %s\n", addr)
+		log.Fatal(http.ListenAndServe(addr, proxy))
+
+	case "socks5":
+		fmt.Printf(">>> SOCKS5 Proxy listening on %s\n", addr)
+		fmt.Printf(">>> Configure your apps to use SOCKS5 Proxy: %s\n", addr)
+
+		// Create SOCKS5 server with Tailscale dialer
+		conf := &socks5.Config{
+			Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				fmt.Printf("[SOCKS5] Dialing %s via Tailscale\n", addr)
+				return s.Dial(ctx, network, addr)
+			},
+		}
+		socks5Server, err := socks5.New(conf)
+		if err != nil {
+			log.Fatalf("!!! Failed to create SOCKS5 server: %v", err)
+		}
+		log.Fatal(socks5Server.ListenAndServe("tcp", addr))
+
+	default:
+		log.Fatalf("!!! Unknown mode '%s'. Use 'http' or 'socks5'", mode)
+	}
 }
 
 // --- PROXY IMPLEMENTATION ---
