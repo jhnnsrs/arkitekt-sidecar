@@ -1,0 +1,60 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+        # Exclude unlikely combinations if strictly necessary, but Go supports most.
+        # Keeping all 6 combinations for "all platforms" coverage.
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+        cache: true
+
+    - name: Test
+      run: go test -v ./...
+
+    - name: Set Version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        else
+          echo "VERSION=dev-${GITHUB_SHA::7}" >> $GITHUB_ENV
+        fi
+
+    - name: Build
+      shell: bash
+      run: |
+        EXTENSION=""
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          EXTENSION=".exe"
+        fi
+        
+        OUTPUT_NAME="arkitekt-sidecar-${{ matrix.goos }}-${{ matrix.goarch }}${EXTENSION}"
+        
+        echo "Building for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+        env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags "-X main.version=${{ env.VERSION }}" -o build/${OUTPUT_NAME} main.go
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: arkitekt-sidecar-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: build/*

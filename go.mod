@@ -1,4 +1,4 @@
-module example.com/mytailscale
+module arkitekt.live/arkitekt-sidecar
 
 go 1.25.5
 
